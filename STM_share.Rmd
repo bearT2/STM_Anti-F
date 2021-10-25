@@ -1,0 +1,85 @@
+
+```{r setup, include=FALSE}
+library(stm)
+library(dplyr)
+library(ggplot2)
+library(quanteda)
+library(glue)
+library(tidytext)
+library(tm)
+library(NLP)
+library(igraph)
+library(tidyverse)
+library(magrittr)
+library(visNetwork)
+library(data.table)
+```
+
+```{r}
+#loading raw text, FYR
+all<-readRDS(file="all.rds")
+#loading raw text, with at least one share
+text<-readRDS(file="text.rds")
+#loading the processed text1
+text1<-readRDS(file = "text1.rds")
+#loading STM (K=51)  -- it has the least residuals. Seems like it splits the pro/anti-Fauci tweets better than other models
+stmFit.51<-readRDS(file="stmFit.51.rds")
+#loading user information 
+user_meta<-readRDS(file="user_meta.rds")
+account<-readRDS(file="account.rds")
+```
+
+
+```{r}
+##data preprocessing steps
+##combine data: I combined each account's monthly tweets to provide more information to topic model. However, we still have short texts to filter 
+text1<-aggregate(text$tweets,list(text$merge.l),paste,collapse="///")
+colnames(text1)=c("merge.l","c.tweets")
+##aggregate the number of retweets too
+rt_mon<-text%>%dplyr::group_by(merge.l)%>%dplyr::summarise(sum.rt=sum(retweets))
+text1=text1%>%left_join(rt_mon,by="merge.l")
+text1$screen_name=substr(text1$merge.l,9,50)
+#merge account type data
+text1=text1%>%left_join(user_meta,by="screen_name") 
+#create month variable
+text1$ym<-substr(text1$merge.l, 1,7)
+#calculate word counts of each row of combined tweets
+text1$wcount<-str_count(text1$c.tweets,"\\W+") 
+text1$t_id<-seq(1:nrow(text1))
+#calculate the number of hashtags
+text1$nhash<-str_count(text1$c.tweets,"#\\w+") 
+#calculate how many words after substracting the hashtags
+#this is to filter out some texts that include mostly just hashtags 
+text1$wcount_nohash<-text1$wcount-text1$nhash
+##set 5 as a threshold
+text1$hattack[text1$wcount_nohash<=5]=1
+text1$hattack[text1$wcount_nohash>5]=0
+##remove those texts with mostly hashtags
+text0=text1%>%filter(hattack==0)
+##check word counts
+text_df <- tibble(text = text1$c.tweets)%>%unnest_tokens(word,text)%>%anti_join(stop_words)%>%dplyr::count(word, sort = TRUE)
+```
+
+
+```{r}
+#create corpus/text preprocessing for STM 
+processed <- textProcessor(text0$c.tweets, metadata =text0,removestopwords = TRUE,removenumbers = TRUE, removepunctuation = TRUE,lowercase = TRUE,stem = TRUE,customstopwords = c("fauci|firefauci|arrestfauci|faucithefraud|faucifraud|covid"))
+out <- prepDocuments(processed$documents, processed$vocab, processed$meta,upper.thresh=7000,lower.thresh=5)
+docs <- out$documents
+vocab <- out$vocab
+meta <-out$meta
+```
+
+```{r}
+##list the top words link to each topic 
+##replace "c(1:51)" with a topicn number 
+labelTopics(stmFit.51,c(1:51),n = 10)
+```
+
+```{r}
+##list the top combined tweets within each topic
+##change the number in the "topics =" 
+findThoughts(stmFit.51, texts = out$meta$c.tweets,n =10 , topics =7)
+```
+
+
